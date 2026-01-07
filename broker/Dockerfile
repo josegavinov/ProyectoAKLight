@@ -2,7 +2,7 @@ FROM gcc:13
 
 WORKDIR /app
 
-COPY broker.c broker.h ../common/protocol.h ./
+COPY broker/broker.c broker/broker.h common/protocol.h ./
 
 RUN gcc broker.c -o broker
 

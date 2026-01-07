@@ -1,14 +1,21 @@
-version: "3.8"
-
 services:
   broker:
-    build: ./broker
+    build: .
     container_name: broker
+    command: ["./broker"]
     ports:
       - "1883:1883"
 
   producer:
-    build: ./producer
+    build: .
     container_name: producer
+    command: ["./producer"]
+    depends_on:
+      - broker
+
+  consumer:
+    build: .
+    container_name: consumer
+    command: ["./consumer"]
     depends_on:
       - broker
