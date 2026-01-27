@@ -7,9 +7,15 @@
 
 #include "broker.h"
 #include "protocol.h"
+#include "../common/message.h"
+#include "../common/queue.h"
+
+
 
 #define BROKER_PORT 1883
 
+Topic topics[MAX_TOPICS];
+int topic_count = 0;
 subscriber_t subscribers[MAX_CLIENTS];
 int subscriber_count = 0;
 
@@ -20,7 +26,21 @@ int find_client_index(int socket) {
     }
     return -1;
 }
+Topic* get_or_create_topic(const char *name) {
+    for (int i = 0; i < topic_count; i++) {
+        if (strcmp(topics[i].name, name) == 0)
+            return &topics[i];
+    }
 
+    if (topic_count >= MAX_TOPICS)
+        return NULL;
+
+    strcpy(topics[topic_count].name, name);
+    queue_init(&topics[topic_count].queue);
+    topic_count++;
+
+    return &topics[topic_count - 1];
+}
 int main() {
     int server_fd, client_fd;
     struct sockaddr_in server_addr;
@@ -85,23 +105,67 @@ int main() {
 
                 // SUBSCRIBE
                 if (strncmp(buffer, CMD_SUBSCRIBE, strlen(CMD_SUBSCRIBE)) == 0) {
-                    sscanf(buffer, "SUBSCRIBE %s", subscribers[idx].topic);
-                    printf("Cliente %d suscrito a %s\n",
-                           sd, subscribers[idx].topic);
+                    char topic_name[MAX_TOPIC];
+                    char mode[4] = "NP";  // no persistente por defecto
+
+                    sscanf(buffer, "SUBSCRIBE %s %s", topic_name, mode);
+
+                    strcpy(subscribers[idx].topic, topic_name);
+                    subscribers[idx].persistent = (strcmp(mode, "P") == 0);
+
+                    printf("Cliente %d suscrito a %s (%s)\n",
+                        sd, topic_name,
+                        subscribers[idx].persistent ? "persistente" : "no persistente");
+
+                    // Si es persistente, enviar mensajes históricos
+                    if (subscribers[idx].persistent) {
+                        for (int t = 0; t < topic_count; t++) {
+                            if (strcmp(topics[t].name, topic_name) == 0) {
+                                Message msg;
+                                MessageQueue *q = &topics[t].queue;
+
+                                // Copia segura de la cola
+                                pthread_mutex_lock(&q->mutex);
+                                QueueNode *cur = q->head;
+                                while (cur) {
+                                    char out[BUFFER_SIZE];
+                                    snprintf(out, BUFFER_SIZE,
+                                            "MESSAGE %s %s\n",
+                                            cur->msg.topic,
+                                            cur->msg.payload);
+                                    write(sd, out, strlen(out));
+                                    cur = cur->next;
+                                }
+                                pthread_mutex_unlock(&q->mutex);
+                            }
+                        }
+                    }
                 }
 
                 // PUBLISH
                 if (strncmp(buffer, CMD_PUBLISH, strlen(CMD_PUBLISH)) == 0) {
-                    char topic[MAX_TOPIC];
-                    char msg[MAX_MESSAGE];
+                    char topic_name[MAX_TOPIC];
+                    char payload[MAX_MESSAGE];
 
-                    sscanf(buffer, "PUBLISH %s %[^\n]", topic, msg);
+                    sscanf(buffer, "PUBLISH %s %[^\n]", topic_name, payload);
 
+                    Topic *topic = get_or_create_topic(topic_name);
+                    if (!topic) continue;
+
+                    Message msg;
+                    strcpy(msg.topic, topic_name);
+                    strcpy(msg.payload, payload);
+                    msg.timestamp = time(NULL);
+
+                    // Guardar en la cola del tópico
+                    queue_push(&topic->queue, &msg);
+
+                    // Reenviar a subscribers
                     for (int j = 0; j < subscriber_count; j++) {
-                        if (strcmp(subscribers[j].topic, topic) == 0) {
+                        if (strcmp(subscribers[j].topic, topic_name) == 0) {
                             char out[BUFFER_SIZE];
                             snprintf(out, BUFFER_SIZE,
-                                     "MESSAGE %s %s\n", topic, msg);
+                                    "MESSAGE %s %s\n", topic_name, payload);
                             write(subscribers[j].socket, out, strlen(out));
                         }
                     }
