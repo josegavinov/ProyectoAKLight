@@ -9,7 +9,7 @@
 
 #include "../common/protocol.h"
 
-#define BROKER_HOST "broker"
+#define BROKER_HOST "127.0.0.1"
 #define BROKER_PORT 1883
 
 #define ALERT_TOPIC "alertas/whatsapp"
@@ -90,8 +90,73 @@ float simulate_cpu_usage() {
    ========================= */
 
 int main() {
+    int sock;
+    struct sockaddr_in broker_addr;
+    struct hostent *server;
+    char buffer[BUFFER_SIZE];
+
     srand(time(NULL));
-    printf("Stress test con WhatsApp iniciando...\n");
-    send_whatsapp_alert("🚨 Prueba AKLight: mensaje desde stress.c");
+
+    printf("Stress test AKLight iniciando...\n");
+
+    /* Conexión al broker */
+    server = gethostbyname(BROKER_HOST);
+    if (!server) {
+        fprintf(stderr, "No se pudo resolver host: %s\n", BROKER_HOST);
+        exit(1);
+    }
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    memset(&broker_addr, 0, sizeof(broker_addr));
+    broker_addr.sin_family = AF_INET;
+    broker_addr.sin_port = htons(BROKER_PORT);
+    memcpy(&broker_addr.sin_addr.s_addr,
+           server->h_addr,
+           server->h_length);
+
+    while (connect(sock, (struct sockaddr *)&broker_addr, sizeof(broker_addr)) < 0) {
+        printf("Esperando broker...\n");
+        sleep(1);
+    }
+
+    printf("Stress conectado al broker\n");
+
+    /* Loop de estrés */
+    while (1) {
+        float cpu = simulate_cpu_usage();
+
+        /* Publicar carga */
+        snprintf(buffer, BUFFER_SIZE,
+                 "PUBLISH %s CPU=%.2f%%\n",
+                 STRESS_TOPIC, cpu);
+        write(sock, buffer, strlen(buffer));
+
+        printf("[STRESS] CPU=%.2f%%\n", cpu);
+
+        /* Alerta crítica */
+        if (cpu >= CPU_THRESHOLD) {
+            char alert[256];
+            snprintf(alert, sizeof(alert),
+                     "🚨 ALERTA CRÍTICA AKLight: CPU %.2f%%", cpu);
+
+            /* WhatsApp */
+            send_whatsapp_alert(alert);
+
+            /* Publicar alerta */
+            snprintf(buffer, BUFFER_SIZE,
+                     "PUBLISH %s %s\n",
+                     ALERT_TOPIC, alert);
+            write(sock, buffer, strlen(buffer));
+        }
+
+        usleep(500000); // 0.5s
+    }
+
+    close(sock);
     return 0;
 }

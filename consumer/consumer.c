@@ -6,9 +6,8 @@
 #include <netdb.h>
 #include "protocol.h"
 
-#define BROKER_HOST "broker"
+#define BROKER_HOST "127.0.0.1"
 #define BROKER_PORT 1883
-#define TOPIC "sistema/memoria/uso"
 
 int main() {
     int sock;
@@ -16,24 +15,24 @@ int main() {
     struct hostent *server;
     char buffer[BUFFER_SIZE];
 
-    printf("Subscriber iniciando...\n");
+    printf("Consumer AKLight iniciando...\n");
     fflush(stdout);
 
-    // Resolver DNS
+    /* Resolver DNS */
     server = gethostbyname(BROKER_HOST);
     if (!server) {
-        fprintf(stderr, "No se pudo resolver broker\n");
-        exit(1);
+    fprintf(stderr, "No se pudo resolver host: %s\n", BROKER_HOST);
+    exit(1);
     }
 
-    // Crear socket
+    /* Crear socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("socket");
         exit(1);
     }
 
-    // Configurar dirección
+    /* Configurar dirección */
     memset(&broker_addr, 0, sizeof(broker_addr));
     broker_addr.sin_family = AF_INET;
     broker_addr.sin_port = htons(BROKER_PORT);
@@ -41,29 +40,44 @@ int main() {
            server->h_addr,
            server->h_length);
 
-    // Conectar
+    /* Conectar */
     if (connect(sock, (struct sockaddr *)&broker_addr, sizeof(broker_addr)) < 0) {
         perror("connect");
         exit(1);
     }
 
-    printf("Subscriber conectado al broker\n");
+    printf("Consumer conectado al broker\n");
     fflush(stdout);
 
-    // Suscribirse
-    snprintf(buffer, BUFFER_SIZE, "SUBSCRIBE %s\n", TOPIC);
+    /* ================= SUSCRIPCIONES ================= */
+
+    /* Métricas (no persistente) */
+    snprintf(buffer, BUFFER_SIZE, "SUBSCRIBE stress/# NP\n");
     write(sock, buffer, strlen(buffer));
+    printf("Suscrito a stress/# (NP)\n");
 
-    printf("Suscrito al tópico: %s\n", TOPIC);
+    /* Alertas (persistente) */
+    snprintf(buffer, BUFFER_SIZE, "SUBSCRIBE alertas/# P\n");
+    write(sock, buffer, strlen(buffer));
+    printf("Suscrito a alertas/# (P)\n");
+
     fflush(stdout);
 
-    // Escuchar mensajes
+    /* ================= RECEPCIÓN ================= */
+
     while (1) {
         int bytes = read(sock, buffer, BUFFER_SIZE - 1);
-        if (bytes <= 0) break;
+        if (bytes <= 0)
+            break;
 
         buffer[bytes] = '\0';
-        printf(">> %s", buffer);
+
+        if (strstr(buffer, "alertas/")) {
+            printf("🚨 ALERTA >> %s", buffer);
+        } else {
+            printf("📊 METRICA >> %s", buffer);
+        }
+
         fflush(stdout);
     }
 
