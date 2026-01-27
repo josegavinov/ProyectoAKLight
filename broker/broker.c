@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include <time.h>
 
 #include "broker.h"
 #include "protocol.h"
@@ -40,7 +41,10 @@ Topic* get_or_create_topic(const char *name) {
         return NULL;
 
     strcpy(topics[topic_count].name, name);
-    queue_init(&topics[topic_count].queue);
+    for (int p = 0; p < MAX_PARTITIONS; p++) {
+        queue_init(&topics[topic_count].partitions[p]);
+    }
+    topics[topic_count].next_partition = 0;
     topic_count++;
 
     return &topics[topic_count - 1];
@@ -143,24 +147,26 @@ int main() {
                            sd, topic_name,
                            subscribers[idx].persistent ? "persistente" : "no persistente");
 
-                    /* Envío de históricos con wildcard */
+                    /* Envío de históricos */
                     if (subscribers[idx].persistent) {
                         for (int t = 0; t < topic_count; t++) {
                             if (topic_matches(subscribers[idx].topic, topics[t].name)) {
-                                MessageQueue *q = &topics[t].queue;
+                                for (int p = 0; p < MAX_PARTITIONS; p++) {
+                                    MessageQueue *q = &topics[t].partitions[p];
 
-                                pthread_mutex_lock(&q->mutex);
-                                QueueNode *cur = q->head;
-                                while (cur) {
-                                    char out[BUFFER_SIZE];
-                                    snprintf(out, BUFFER_SIZE,
-                                             "MESSAGE %s %s\n",
-                                             cur->msg.topic,
-                                             cur->msg.payload);
-                                    write(sd, out, strlen(out));
-                                    cur = cur->next;
+                                    pthread_mutex_lock(&q->mutex);
+                                    QueueNode *cur = q->head;
+                                    while (cur) {
+                                        char out[BUFFER_SIZE];
+                                        snprintf(out, BUFFER_SIZE,
+                                                 "MESSAGE %s %s\n",
+                                                 cur->msg.topic,
+                                                 cur->msg.payload);
+                                        write(sd, out, strlen(out));
+                                        cur = cur->next;
+                                    }
+                                    pthread_mutex_unlock(&q->mutex);
                                 }
-                                pthread_mutex_unlock(&q->mutex);
                             }
                         }
                     }
@@ -181,7 +187,9 @@ int main() {
                     strcpy(msg.payload, payload);
                     msg.timestamp = time(NULL);
 
-                    queue_push(&topic->queue, &msg);
+                    int p = topic->next_partition;
+                    queue_push(&topic->partitions[p], &msg);
+                    topic->next_partition = (topic->next_partition + 1) % MAX_PARTITIONS;
 
                     /* Reenvío con wildcard */
                     for (int j = 0; j < subscriber_count; j++) {

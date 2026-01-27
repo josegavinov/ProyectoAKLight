@@ -8,6 +8,7 @@
 
 #define MAX_CLIENTS 10
 #define MAX_TOPICS  10
+#define MAX_PARTITIONS 3
 
 typedef struct {
 int socket;
@@ -17,7 +18,8 @@ int persistent; // 1 = persistente, 0 = no persistente
 
 typedef struct {
     char name[MAX_TOPIC];
-    MessageQueue queue;
+    MessageQueue partitions[MAX_PARTITIONS];
+    int next_partition;
 } Topic;
 
 // Variables globales (definidas en broker.c)
